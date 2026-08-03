@@ -10,8 +10,8 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.util.HashMap;
-import java.util.Map;
+import org.apache.commons.configuration2.INIConfiguration;
+import org.apache.commons.configuration2.ex.ConfigurationException;
 
 public final class IniSettingsService {
 
@@ -34,21 +34,29 @@ public final class IniSettingsService {
             return settings;
         }
 
-        try {
-            Map<String, String> values = readValues();
-            settings.setVideoEnabled(readBoolean(values, "media.video", true));
-            settings.setAudioEnabled(readBoolean(values, "media.audio", false));
+        try (BufferedReader reader = Files.newBufferedReader(
+                settingsPath, StandardCharsets.UTF_8)) {
+            INIConfiguration configuration = new INIConfiguration();
+            configuration.read(reader);
 
-            String outputDirectory = values.get("output.directory");
+            settings.setVideoEnabled(
+                    configuration.getBoolean("media.video", true));
+            settings.setAudioEnabled(
+                    configuration.getBoolean("media.audio", false));
+
+            String outputDirectory =
+                    configuration.getString("output.directory");
             if (outputDirectory != null && !outputDirectory.trim().isEmpty()) {
                 settings.setOutputDirectory(Paths.get(outputDirectory.trim()));
             }
 
-            String inputDirectory = values.get("input.directory");
+            String inputDirectory =
+                    configuration.getString("input.directory");
             if (inputDirectory != null && !inputDirectory.trim().isEmpty()) {
                 settings.setLastOpenedDirectory(Paths.get(inputDirectory.trim()));
             }
-        } catch (IOException | InvalidPathException exception) {
+        } catch (IOException | ConfigurationException
+                 | InvalidPathException exception) {
             System.err.println("Could not read settings from " + settingsPath + ": "
                     + exception.getMessage());
         }
@@ -59,27 +67,22 @@ public final class IniSettingsService {
         Files.createDirectories(settingsPath.getParent());
         Path temporaryPath = settingsPath.resolveSibling(SETTINGS_FILE + ".tmp");
 
+        INIConfiguration configuration = new INIConfiguration();
+        configuration.setProperty("media.video", settings.isVideoEnabled());
+        configuration.setProperty("media.audio", settings.isAudioEnabled());
+        configuration.setProperty("output.directory",
+                settings.getOutputDirectory().toAbsolutePath().toString());
+        configuration.setProperty("input.directory",
+                settings.getLastOpenedDirectory() == null
+                        ? ""
+                        : settings.getLastOpenedDirectory()
+                                .toAbsolutePath().toString());
+
         try (BufferedWriter writer = Files.newBufferedWriter(
                 temporaryPath, StandardCharsets.UTF_8)) {
-            writer.write("[media]");
-            writer.newLine();
-            writer.write("video=" + settings.isVideoEnabled());
-            writer.newLine();
-            writer.write("audio=" + settings.isAudioEnabled());
-            writer.newLine();
-            writer.newLine();
-            writer.write("[output]");
-            writer.newLine();
-            writer.write("directory=" + settings.getOutputDirectory().toAbsolutePath());
-            writer.newLine();
-            writer.newLine();
-            writer.write("[input]");
-            writer.newLine();
-            writer.write("directory=");
-            if (settings.getLastOpenedDirectory() != null) {
-                writer.write(settings.getLastOpenedDirectory().toAbsolutePath().toString());
-            }
-            writer.newLine();
+            configuration.write(writer);
+        } catch (ConfigurationException exception) {
+            throw new IOException("Could not write INI settings", exception);
         }
 
         try {
@@ -92,41 +95,6 @@ public final class IniSettingsService {
 
     public Path getSettingsPath() {
         return settingsPath;
-    }
-
-    private Map<String, String> readValues() throws IOException {
-        Map<String, String> values = new HashMap<>();
-        String section = "";
-
-        try (BufferedReader reader = Files.newBufferedReader(
-                settingsPath, StandardCharsets.UTF_8)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith(";") || trimmed.startsWith("#")) {
-                    continue;
-                }
-                if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                    section = trimmed.substring(1, trimmed.length() - 1)
-                            .trim().toLowerCase();
-                    continue;
-                }
-
-                int separator = trimmed.indexOf('=');
-                if (separator > 0) {
-                    String key = trimmed.substring(0, separator).trim().toLowerCase();
-                    String value = trimmed.substring(separator + 1).trim();
-                    values.put(section + "." + key, value);
-                }
-            }
-        }
-        return values;
-    }
-
-    private boolean readBoolean(Map<String, String> values, String key,
-                                boolean defaultValue) {
-        String value = values.get(key);
-        return value == null ? defaultValue : Boolean.parseBoolean(value);
     }
 
     private static Path resolveSettingsPath() {
