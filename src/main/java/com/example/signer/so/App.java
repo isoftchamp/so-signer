@@ -13,9 +13,15 @@ import java.io.IOException;
  */
 public class App extends Application {
 
+    private PrimaryController primaryController;
+
     @Override
     public void start(Stage stage) throws IOException {
-        Scene scene = new Scene(loadFXML("primary"), 900, 600);
+        FXMLLoader loader = new FXMLLoader(App.class.getResource("primary.fxml"));
+        Parent root = loader.load();
+        primaryController = loader.getController();
+
+        Scene scene = new Scene(root, 900, 600);
         stage.setTitle("Media Converter");
         stage.setMinWidth(720);
         stage.setMinHeight(480);
@@ -24,9 +30,11 @@ public class App extends Application {
         stage.show();
     }
 
-    private static Parent loadFXML(String fxml) throws IOException {
-        FXMLLoader fxmlLoader = new FXMLLoader(App.class.getResource(fxml + ".fxml"));
-        return fxmlLoader.load();
+    @Override
+    public void stop() throws Exception {
+        if (primaryController != null) {
+            primaryController.shutdown();
+        }
     }
 
     public static void main(String[] args) {

@@ -20,6 +20,16 @@
             <artifactId>javafx-fxml</artifactId>
             <version>13</version>
         </dependency>
+        <dependency>
+            <groupId>com.github.zhkl0228</groupId>
+            <artifactId>unidbg-android</artifactId>
+            <version>0.9.9</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.zhkl0228</groupId>
+            <artifactId>unidbg-unicorn2</artifactId>
+            <version>0.9.9</version>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
@@ -69,6 +79,7 @@
                                 </filter>
                             </filters>
                             <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.example.signer.so.Launcher</mainClass>
                                 </transformer>

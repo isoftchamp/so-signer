@@ -38,7 +38,7 @@ public final class PrimaryController {
     private final BooleanProperty converting = new SimpleBooleanProperty(false);
     private final MediaScanner mediaScanner = new MediaScanner();
     private final IniSettingsService settingsService = new IniSettingsService();
-    private final MediaConverter mediaConverter = new DefaultMediaConverter();
+    private final MediaConverter mediaConverter = new AndroidSoMediaConverter();
 
     private AppSettings settings;
     private Path selectedFolder;
@@ -330,6 +330,13 @@ public final class PrimaryController {
         alert.setContentText(message == null || message.isEmpty()
                 ? "An unknown error occurred." : message);
         alert.showAndWait();
+    }
+
+    /**
+     * Releases the emulator and its native backend when JavaFX shuts down.
+     */
+    public void shutdown() throws Exception {
+        mediaConverter.close();
     }
 
     private static final class StatusTableCell
