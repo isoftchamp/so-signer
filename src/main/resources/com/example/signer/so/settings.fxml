@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.CheckBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox spacing="14.0" styleClass="settings-form" stylesheets="@styles.css"
+      xmlns="http://javafx.com/javafx/13"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.example.signer.so.SettingsController">
+    <Label styleClass="settings-heading" text="Media types" />
+    <HBox spacing="18.0">
+        <CheckBox fx:id="videoCheckBox" mnemonicParsing="false" text="Video" />
+        <CheckBox fx:id="audioCheckBox" mnemonicParsing="false" text="Audio" />
+    </HBox>
+    <Label styleClass="settings-heading" text="Output folder">
+        <VBox.margin>
+            <Insets top="6.0" />
+        </VBox.margin>
+    </Label>
+    <GridPane hgap="8.0">
+        <TextField fx:id="outputDirectoryField" prefWidth="360.0"
+                   promptText="Choose an output folder" GridPane.columnIndex="0" />
+        <Button fx:id="browseButton" mnemonicParsing="false" onAction="#browseOutputDirectory"
+                text="Browse" GridPane.columnIndex="1" />
+    </GridPane>
+</VBox>

@@ -1,0 +1,112 @@
+.root {
+    -fx-background-color: #f6f7fb;
+    -fx-font-family: "Segoe UI", sans-serif;
+    -fx-font-size: 13px;
+}
+
+.app-title {
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #18212f;
+}
+
+.app-subtitle {
+    -fx-text-fill: #667085;
+}
+
+.tool-bar {
+    -fx-background-color: white;
+    -fx-border-color: transparent transparent #dfe3e8 transparent;
+    -fx-padding: 10px 16px;
+}
+
+.button {
+    -fx-background-color: white;
+    -fx-border-color: #cbd2d9;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 7px 12px;
+    -fx-cursor: hand;
+}
+
+.button:hover {
+    -fx-background-color: #f0f4f8;
+}
+
+#convertButton {
+    -fx-background-color: #2563eb;
+    -fx-border-color: #2563eb;
+    -fx-text-fill: white;
+}
+
+#convertButton:hover {
+    -fx-background-color: #1d4ed8;
+}
+
+.button-icon {
+    -fx-fill: #475467;
+}
+
+#convertButton .button-icon {
+    -fx-fill: white;
+}
+
+.table-view {
+    -fx-background-color: white;
+    -fx-border-color: #dfe3e8;
+    -fx-border-radius: 6px;
+    -fx-background-radius: 6px;
+}
+
+.table-view .column-header-background {
+    -fx-background-color: #f8fafc;
+}
+
+.table-view .column-header,
+.table-view .filler {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent transparent #dfe3e8 transparent;
+    -fx-padding: 7px;
+}
+
+.status-badge {
+    -fx-background-radius: 20px;
+    -fx-padding: 3px 9px;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.status-pending {
+    -fx-background-color: #e5e7eb;
+    -fx-text-fill: #4b5563;
+}
+
+.status-converting {
+    -fx-background-color: #dbeafe;
+    -fx-text-fill: #1d4ed8;
+}
+
+.status-success {
+    -fx-background-color: #dcfce7;
+    -fx-text-fill: #15803d;
+}
+
+.status-failed {
+    -fx-background-color: #fee2e2;
+    -fx-text-fill: #b91c1c;
+}
+
+.status-bar {
+    -fx-border-color: #dfe3e8 transparent transparent transparent;
+    -fx-padding: 10px 0;
+    -fx-text-fill: #667085;
+}
+
+.settings-form {
+    -fx-padding: 18px;
+}
+
+.settings-heading {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
