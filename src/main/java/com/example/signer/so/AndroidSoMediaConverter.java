@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.Locale;
 
 /**
  * Conversion boundary backed by an emulated Android runtime.
@@ -24,7 +25,10 @@ public final class AndroidSoMediaConverter implements MediaConverter {
     @Override
     public synchronized void convert(Path input, Path output) throws Exception {
         AndroidSoRuntime android = runtime();
+        long conversionStarted = System.nanoTime();
+        long copyStarted = System.nanoTime();
         copyFile(input, output);
+        long copyNanos = System.nanoTime() - copyStarted;
 
         /*
          * The application currently uses the dynamically registered JNI
@@ -36,7 +40,14 @@ public final class AndroidSoMediaConverter implements MediaConverter {
          * Do not call both methods for the same output file: each invocation
          * appends its own "HASH" separator and CRC bytes.
          */
+        long nativeStarted = System.nanoTime();
         int status = android.appendFileCrc32WithDynamicJni(output);
+        long nativeNanos = System.nanoTime() - nativeStarted;
+        System.out.println("[Performance] Host copy: "
+                + formatDuration(copyNanos));
+        System.out.println("[Performance] Native CRC ("
+                + android.getBackendName() + "): "
+                + formatDuration(nativeNanos));
         if (status != 0) {
             Files.deleteIfExists(output);
             throw new IOException("Native checksum append failed: "
@@ -47,17 +58,28 @@ public final class AndroidSoMediaConverter implements MediaConverter {
                 + String.format("%08x", checksum));
         System.out.println("[Custom SO] Appended: ASCII HASH + 4 raw bytes");
         System.out.println("[Custom SO] Output: " + output.toAbsolutePath());
+        System.out.println("[Performance] Conversion total: "
+                + formatDuration(System.nanoTime() - conversionStarted));
     }
 
     private AndroidSoRuntime runtime() throws IOException {
         if (runtime == null) {
             runtime = new AndroidSoRuntime();
+            System.out.println("[Custom SO] Emulator backend: "
+                    + runtime.getBackendName());
+            System.out.println("[Performance] Emulator initialization: "
+                    + formatDuration(runtime.getInitializationNanos()));
             System.out.println("[Custom SO] Dynamic JNI: "
                     + runtime.getDynamicJniVersion());
             System.out.println("[Custom SO] System library: "
                     + runtime.getSystemLibraryVersion());
         }
         return runtime;
+    }
+
+    private String formatDuration(long nanoseconds) {
+        return String.format(
+                Locale.ROOT, "%.3f ms", nanoseconds / 1_000_000.0);
     }
 
     private void copyFile(Path input, Path output) throws IOException {

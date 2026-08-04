@@ -4,6 +4,7 @@ import com.github.unidbg.AndroidEmulator;
 import com.github.unidbg.Emulator;
 import com.github.unidbg.Module;
 import com.github.unidbg.Symbol;
+import com.github.unidbg.arm.backend.DynarmicFactory;
 import com.github.unidbg.arm.backend.Unicorn2Factory;
 import com.github.unidbg.file.FileResult;
 import com.github.unidbg.file.IOResolver;
@@ -41,6 +42,8 @@ public final class AndroidSoRuntime extends AbstractJni
 
     private static final String CLASSPATH_LIBRARY =
             "native/" + LIBRARY_FILE_NAME;
+    private static final String BACKEND_PROPERTY =
+            "so.signer.backend";
     private static final String NATIVE_CLASS_NAME =
             NativeMediaProcessor.class.getName().replace('.', '/');
     private static final String VIRTUAL_OUTPUT_PATH =
@@ -52,6 +55,7 @@ public final class AndroidSoRuntime extends AbstractJni
     private Module module;
     private Path extractedLibrary;
     private Path mappedOutput;
+    private long initializationNanos;
 
     /**
      * Starts a 32-bit Android VM and calls the library's JNI_OnLoad function.
@@ -60,11 +64,13 @@ public final class AndroidSoRuntime extends AbstractJni
      * build must use {@code for64Bit()} and a matching native resource.</p>
      */
     public AndroidSoRuntime() throws IOException {
+        long initializationStarted = System.nanoTime();
         try {
-            emulator = AndroidEmulatorBuilder.for32Bit()
-                    .setProcessName("com.example.signer.so")
-                    .addBackendFactory(new Unicorn2Factory(true))
-                    .build();
+            AndroidEmulatorBuilder builder =
+                    AndroidEmulatorBuilder.for32Bit();
+            builder.setProcessName("com.example.signer.so");
+            configureBackend(builder);
+            emulator = builder.build();
             emulator.getMemory().setLibraryResolver(new AndroidResolver(23));
             emulator.getSyscallHandler().addIOResolver(this);
 
@@ -81,6 +87,7 @@ public final class AndroidSoRuntime extends AbstractJni
             DalvikModule dalvikModule = vm.loadLibrary(library, false);
             module = dalvikModule.getModule();
             dalvikModule.callJNI_OnLoad(emulator);
+            initializationNanos = System.nanoTime() - initializationStarted;
         } catch (RuntimeException | IOException exception) {
             closeAfterInitializationFailure();
             throw exception;
@@ -93,6 +100,35 @@ public final class AndroidSoRuntime extends AbstractJni
 
     VM getVm() {
         return vm;
+    }
+
+    public String getBackendName() {
+        return emulator.getBackend().getClass().getSimpleName();
+    }
+
+    public long getInitializationNanos() {
+        return initializationNanos;
+    }
+
+    private void configureBackend(AndroidEmulatorBuilder builder) {
+        String requestedBackend = System.getProperty(
+                BACKEND_PROPERTY, "dynarmic").trim();
+        if ("dynarmic".equalsIgnoreCase(requestedBackend)) {
+            /*
+             * Prefer Dynarmic JIT and fall back to Unicorn2 only when its
+             * native backend cannot load.
+             */
+            builder.addBackendFactory(new DynarmicFactory(true));
+            builder.addBackendFactory(new Unicorn2Factory(false));
+            return;
+        }
+        if ("unicorn2".equalsIgnoreCase(requestedBackend)) {
+            builder.addBackendFactory(new Unicorn2Factory(false));
+            return;
+        }
+        throw new IllegalArgumentException(
+                "Unsupported emulator backend '" + requestedBackend
+                        + "'. Use dynarmic or unicorn2.");
     }
 
     /**

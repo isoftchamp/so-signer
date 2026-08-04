@@ -27,6 +27,11 @@
         </dependency>
         <dependency>
             <groupId>com.github.zhkl0228</groupId>
+            <artifactId>unidbg-dynarmic</artifactId>
+            <version>0.9.9</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.zhkl0228</groupId>
             <artifactId>unidbg-unicorn2</artifactId>
             <version>0.9.9</version>
         </dependency>
