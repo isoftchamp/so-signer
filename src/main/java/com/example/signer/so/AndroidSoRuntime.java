@@ -1,9 +1,13 @@
 package com.example.signer.so;
 
 import com.github.unidbg.AndroidEmulator;
+import com.github.unidbg.Emulator;
 import com.github.unidbg.Module;
 import com.github.unidbg.Symbol;
 import com.github.unidbg.arm.backend.Unicorn2Factory;
+import com.github.unidbg.file.FileResult;
+import com.github.unidbg.file.IOResolver;
+import com.github.unidbg.file.linux.AndroidFileIO;
 import com.github.unidbg.linux.android.AndroidEmulatorBuilder;
 import com.github.unidbg.linux.android.AndroidResolver;
 import com.github.unidbg.linux.android.dvm.AbstractJni;
@@ -11,6 +15,8 @@ import com.github.unidbg.linux.android.dvm.DalvikModule;
 import com.github.unidbg.linux.android.dvm.DvmClass;
 import com.github.unidbg.linux.android.dvm.StringObject;
 import com.github.unidbg.linux.android.dvm.VM;
+import com.github.unidbg.linux.file.SimpleFileIO;
+import com.github.unidbg.memory.MemoryBlock;
 import com.github.unidbg.pointer.UnidbgPointer;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -27,19 +33,25 @@ import java.nio.file.StandardCopyOption;
  * integration details can evolve without adding emulator code to the UI
  * layer.</p>
  */
-public final class AndroidSoRuntime extends AbstractJni implements AutoCloseable {
+public final class AndroidSoRuntime extends AbstractJni
+        implements AutoCloseable, IOResolver<AndroidFileIO> {
 
     public static final String LIBRARY_FILE_NAME =
             "libso-signer-native.so";
 
     private static final String CLASSPATH_LIBRARY =
             "native/" + LIBRARY_FILE_NAME;
+    private static final String NATIVE_CLASS_NAME =
+            NativeMediaProcessor.class.getName().replace('.', '/');
+    private static final String VIRTUAL_OUTPUT_PATH =
+            "/sdcard/so-signer/output";
 
     private AndroidEmulator emulator;
     private VM vm;
     private DvmClass nativeMediaProcessor;
     private Module module;
     private Path extractedLibrary;
+    private Path mappedOutput;
 
     /**
      * Starts a 32-bit Android VM and calls the library's JNI_OnLoad function.
@@ -54,6 +66,7 @@ public final class AndroidSoRuntime extends AbstractJni implements AutoCloseable
                     .addBackendFactory(new Unicorn2Factory(true))
                     .build();
             emulator.getMemory().setLibraryResolver(new AndroidResolver(23));
+            emulator.getSyscallHandler().addIOResolver(this);
 
             vm = emulator.createDalvikVM();
             vm.setVerbose(false);
@@ -63,8 +76,7 @@ public final class AndroidSoRuntime extends AbstractJni implements AutoCloseable
              * Resolve the synthetic class before JNI_OnLoad because the
              * library dynamically registers its JNI methods there.
              */
-            nativeMediaProcessor = vm.resolveClass(
-                    "com/example/signer/so/NativeMediaProcessor");
+            nativeMediaProcessor = vm.resolveClass(NATIVE_CLASS_NAME);
             File library = resolveLibraryFile();
             DalvikModule dalvikModule = vm.loadLibrary(library, false);
             module = dalvikModule.getModule();
@@ -117,6 +129,69 @@ public final class AndroidSoRuntime extends AbstractJni implements AutoCloseable
                     "Custom native version symbol returned null");
         }
         return value.getString(0);
+    }
+
+    /**
+     * Calculates the file CRC and appends it through dynamically registered
+     * JNI.
+     */
+    public synchronized int appendFileCrc32WithDynamicJni(
+            Path output) throws IOException {
+        mapOutput(output);
+        try {
+            return nativeMediaProcessor.callStaticJniMethodInt(
+                    emulator,
+                    "appendFileCrc32(Ljava/lang/String;)I",
+                    new StringObject(vm, VIRTUAL_OUTPUT_PATH));
+        } finally {
+            mappedOutput = null;
+        }
+    }
+
+    /**
+     * Calculates the file CRC and appends it through the plain exported C
+     * symbol.
+     */
+    public synchronized int appendFileCrc32WithSystemLibrary(
+            Path output) throws IOException {
+        mapOutput(output);
+        MemoryBlock outputPath = emulator.getMemory().malloc(
+                VIRTUAL_OUTPUT_PATH.length() + 1, true);
+        try {
+            outputPath.getPointer().setString(0, VIRTUAL_OUTPUT_PATH);
+            return module.callFunction(
+                    emulator,
+                    "so_signer_append_file_crc32",
+                    outputPath.getPointer()).intValue();
+        } finally {
+            outputPath.free();
+            mappedOutput = null;
+        }
+    }
+
+    /**
+     * Resolves only the output path exposed to the native processor. Returning
+     * null delegates Android system paths to unidbg's normal resolvers.
+     */
+    @Override
+    public FileResult<AndroidFileIO> resolve(
+            Emulator<AndroidFileIO> currentEmulator,
+            String path,
+            int openFlags) {
+        if (VIRTUAL_OUTPUT_PATH.equals(path) && mappedOutput != null) {
+            return FileResult.success(new SimpleFileIO(
+                    openFlags, mappedOutput.toFile(), path));
+        }
+        return null;
+    }
+
+    private void mapOutput(Path output) throws IOException {
+        Path absoluteOutput = output.toAbsolutePath().normalize();
+        if (!Files.isRegularFile(absoluteOutput)) {
+            throw new FileNotFoundException(
+                    "Native output file not found: " + absoluteOutput);
+        }
+        mappedOutput = absoluteOutput;
     }
 
     private File resolveLibraryFile() throws IOException {
