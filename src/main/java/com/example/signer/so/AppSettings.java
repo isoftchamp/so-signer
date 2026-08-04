@@ -1,11 +1,10 @@
 package com.example.signer.so;
 
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 public final class AppSettings {
 
-    public static final Path DEFAULT_OUTPUT_DIRECTORY = Paths.get("D:\\output");
+    public static final Path DEFAULT_OUTPUT_DIRECTORY = Path.of("D:\\output");
 
     private boolean videoEnabled;
     private boolean audioEnabled;

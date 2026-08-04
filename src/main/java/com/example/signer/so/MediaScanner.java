@@ -30,8 +30,7 @@ public final class MediaScanner {
         try (Stream<Path> paths = Files.walk(directory)) {
             return paths.filter(Files::isRegularFile)
                     .map(path -> toMediaItem(path, settings))
-                    .filter(Optional::isPresent)
-                    .map(Optional::get)
+                    .flatMap(Optional::stream)
                     .sorted(Comparator.comparing(
                             MediaFileItem::getFileName, String.CASE_INSENSITIVE_ORDER))
                     .collect(Collectors.toList());

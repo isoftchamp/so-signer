@@ -4,7 +4,6 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -41,8 +40,8 @@ public final class SettingsController {
     }
 
     public AppSettings getSettings() {
-        String outputValue = outputDirectoryField.getText().trim();
-        Path outputDirectory = Paths.get(outputValue);
+        String outputValue = outputDirectoryField.getText().strip();
+        Path outputDirectory = Path.of(outputValue);
         return new AppSettings(videoCheckBox.isSelected(), audioCheckBox.isSelected(),
                 outputDirectory, lastOpenedDirectory);
     }
@@ -52,10 +51,10 @@ public final class SettingsController {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Select output folder");
 
-        String outputValue = outputDirectoryField.getText().trim();
-        if (!outputValue.isEmpty()) {
+        String outputValue = outputDirectoryField.getText();
+        if (!outputValue.isBlank()) {
             try {
-                Path currentPath = Paths.get(outputValue);
+                Path currentPath = Path.of(outputValue.strip());
                 if (Files.isDirectory(currentPath)) {
                     chooser.setInitialDirectory(currentPath.toFile());
                 }

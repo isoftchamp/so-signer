@@ -8,7 +8,6 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import org.apache.commons.configuration2.INIConfiguration;
 import org.apache.commons.configuration2.ex.ConfigurationException;
@@ -46,14 +45,14 @@ public final class IniSettingsService {
 
             String outputDirectory =
                     configuration.getString("output.directory");
-            if (outputDirectory != null && !outputDirectory.trim().isEmpty()) {
-                settings.setOutputDirectory(Paths.get(outputDirectory.trim()));
+            if (outputDirectory != null && !outputDirectory.isBlank()) {
+                settings.setOutputDirectory(Path.of(outputDirectory.strip()));
             }
 
             String inputDirectory =
                     configuration.getString("input.directory");
-            if (inputDirectory != null && !inputDirectory.trim().isEmpty()) {
-                settings.setLastOpenedDirectory(Paths.get(inputDirectory.trim()));
+            if (inputDirectory != null && !inputDirectory.isBlank()) {
+                settings.setLastOpenedDirectory(Path.of(inputDirectory.strip()));
             }
         } catch (IOException | ConfigurationException
                  | InvalidPathException exception) {
@@ -100,10 +99,11 @@ public final class IniSettingsService {
     private static Path resolveSettingsPath() {
         String appData = System.getenv("APPDATA");
         Path baseDirectory;
-        if (appData == null || appData.trim().isEmpty()) {
-            baseDirectory = Paths.get(System.getProperty("user.home"), "AppData", "Roaming");
+        if (appData == null || appData.isBlank()) {
+            baseDirectory = Path.of(
+                    System.getProperty("user.home"), "AppData", "Roaming");
         } else {
-            baseDirectory = Paths.get(appData);
+            baseDirectory = Path.of(appData.strip());
         }
         return baseDirectory.resolve(APPLICATION_DIRECTORY).resolve(SETTINGS_FILE);
     }

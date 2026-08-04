@@ -2,6 +2,7 @@ package com.example.signer.so;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -9,11 +10,10 @@ import java.util.List;
 import java.util.Optional;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.concurrent.Service;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -35,10 +35,15 @@ public final class PrimaryController {
 
     private final ObservableList<MediaFileItem> files =
             FXCollections.observableArrayList();
-    private final BooleanProperty converting = new SimpleBooleanProperty(false);
     private final MediaScanner mediaScanner = new MediaScanner();
     private final IniSettingsService settingsService = new IniSettingsService();
     private final MediaConverter mediaConverter = new AndroidSoMediaConverter();
+    private final Service<Void> conversionService = new Service<Void>() {
+        @Override
+        protected Task<Void> createTask() {
+            return createConversionTask();
+        }
+    };
 
     private AppSettings settings;
     private Path selectedFolder;
@@ -83,6 +88,7 @@ public final class PrimaryController {
     private void initialize() {
         settings = settingsService.load();
         configureTable();
+        configureConversionService();
         configureButtons();
         fileTable.setItems(files);
         updateSummary();
@@ -168,15 +174,18 @@ public final class PrimaryController {
 
     @FXML
     private void convertFiles() {
-        if (files.isEmpty() || converting.get()) {
+        if (files.isEmpty() || conversionService.isRunning()) {
             return;
         }
+        conversionService.restart();
+    }
 
+    private Task<Void> createConversionTask() {
         List<MediaFileItem> workItems = new ArrayList<>(files);
         Path sourceDirectory = selectedFolder.toAbsolutePath().normalize();
         Path configuredOutputDirectory =
                 settings.getOutputDirectory().toAbsolutePath().normalize();
-        Task<Void> conversionTask = new Task<Void>() {
+        return new Task<Void>() {
             @Override
             protected Void call() throws Exception {
                 Files.createDirectories(configuredOutputDirectory);
@@ -192,11 +201,16 @@ public final class PrimaryController {
                         Path outputParent = configuredOutputDirectory
                                 .resolve(relativePath).getParent();
                         Files.createDirectories(outputParent);
-                        Path output = nextAvailableOutput(
+                        Path output = reserveNextAvailableOutput(
                                 outputParent, relativePath.getFileName().toString());
-                        mediaConverter.convert(item.getPath(), output);
-                        updateItem(item, ConversionStatus.SUCCESS,
-                                "Output: " + output);
+                        try {
+                            mediaConverter.convert(item.getPath(), output);
+                            updateItem(item, ConversionStatus.SUCCESS,
+                                    "Output: " + output);
+                        } catch (Exception exception) {
+                            Files.deleteIfExists(output);
+                            throw exception;
+                        }
                     } catch (Exception exception) {
                         updateItem(item, ConversionStatus.FAILED,
                                 exception.getMessage());
@@ -205,33 +219,28 @@ public final class PrimaryController {
                 return null;
             }
         };
+    }
 
-        converting.set(true);
-        conversionTask.setOnSucceeded(event -> {
-            converting.set(false);
-            updateSummary();
-        });
-        conversionTask.setOnFailed(event -> {
-            converting.set(false);
-            Throwable error = conversionTask.getException();
+    private void configureConversionService() {
+        conversionService.setOnSucceeded(event -> updateSummary());
+        conversionService.setOnCancelled(event -> updateSummary());
+        conversionService.setOnFailed(event -> {
+            Throwable error = conversionService.getException();
             showError("Conversion could not start",
                     error == null ? "Unknown error" : error.getMessage());
         });
-
-        Thread worker = new Thread(conversionTask, "media-converter");
-        worker.setDaemon(true);
-        worker.start();
     }
 
     private void configureTable() {
         fileTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         nameColumn.setCellValueFactory(cell ->
-                new SimpleStringProperty(cell.getValue().getFileName()));
+                new ReadOnlyStringWrapper(cell.getValue().getFileName()));
         typeColumn.setCellValueFactory(cell ->
-                new SimpleStringProperty(cell.getValue().getMediaType().getDisplayName()));
+                new ReadOnlyStringWrapper(
+                        cell.getValue().getMediaType().getDisplayName()));
         pathColumn.setCellValueFactory(cell ->
-                new SimpleStringProperty(cell.getValue().getPath().toString()));
+                new ReadOnlyStringWrapper(cell.getValue().getPath().toString()));
         statusColumn.setCellValueFactory(cell -> cell.getValue().statusProperty());
         statusColumn.setCellFactory(column -> new StatusTableCell());
     }
@@ -244,14 +253,16 @@ public final class PrimaryController {
         clearButton.setGraphic(ButtonIcons.clear());
 
         convertButton.disableProperty().bind(
-                Bindings.isEmpty(files).or(converting));
-        openFolderButton.disableProperty().bind(converting);
-        settingsButton.disableProperty().bind(converting);
+                Bindings.isEmpty(files).or(conversionService.runningProperty()));
+        openFolderButton.disableProperty().bind(
+                conversionService.runningProperty());
+        settingsButton.disableProperty().bind(
+                conversionService.runningProperty());
         removeButton.disableProperty().bind(
                 Bindings.isEmpty(fileTable.getSelectionModel().getSelectedItems())
-                        .or(converting));
+                        .or(conversionService.runningProperty()));
         clearButton.disableProperty().bind(
-                Bindings.isEmpty(files).or(converting));
+                Bindings.isEmpty(files).or(conversionService.runningProperty()));
     }
 
     private void refreshFiles() {
@@ -293,27 +304,30 @@ public final class PrimaryController {
         summaryLabel.setText(summary.toString());
     }
 
-    private Path nextAvailableOutput(Path directory, String fileName) {
-        Path candidate = directory.resolve(fileName);
-        if (!Files.exists(candidate)) {
-            return candidate;
-        }
-
+    private Path reserveNextAvailableOutput(Path directory, String fileName)
+            throws IOException {
         int extensionIndex = fileName.lastIndexOf('.');
         String baseName = extensionIndex > 0
                 ? fileName.substring(0, extensionIndex) : fileName;
         String extension = extensionIndex > 0
                 ? fileName.substring(extensionIndex) : "";
-        int suffix = 1;
-        do {
-            candidate = directory.resolve(
-                    baseName + " (" + suffix++ + ")" + extension);
-        } while (Files.exists(candidate));
-        return candidate;
+        int suffix = 0;
+
+        while (true) {
+            String candidateName = suffix == 0
+                    ? fileName
+                    : baseName + " (" + suffix + ")" + extension;
+            Path candidate = directory.resolve(candidateName);
+            try {
+                return Files.createFile(candidate);
+            } catch (FileAlreadyExistsException exception) {
+                suffix++;
+            }
+        }
     }
 
     private void validateSettings(AppSettings candidate) {
-        if (candidate.getOutputDirectory().toString().trim().isEmpty()) {
+        if (candidate.getOutputDirectory().toString().isBlank()) {
             throw new IllegalArgumentException("Output folder cannot be empty.");
         }
     }
@@ -336,6 +350,7 @@ public final class PrimaryController {
      * Releases the emulator and its native backend when JavaFX shuts down.
      */
     public void shutdown() throws Exception {
+        conversionService.cancel();
         mediaConverter.close();
     }
 
