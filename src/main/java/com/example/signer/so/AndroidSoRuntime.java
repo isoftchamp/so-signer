@@ -12,9 +12,13 @@ import com.github.unidbg.file.linux.AndroidFileIO;
 import com.github.unidbg.linux.android.AndroidEmulatorBuilder;
 import com.github.unidbg.linux.android.AndroidResolver;
 import com.github.unidbg.linux.android.dvm.AbstractJni;
+import com.github.unidbg.linux.android.dvm.BaseVM;
 import com.github.unidbg.linux.android.dvm.DalvikModule;
 import com.github.unidbg.linux.android.dvm.DvmClass;
+import com.github.unidbg.linux.android.dvm.DvmObject;
 import com.github.unidbg.linux.android.dvm.StringObject;
+import com.github.unidbg.linux.android.dvm.VaList;
+import com.github.unidbg.linux.android.dvm.VarArg;
 import com.github.unidbg.linux.android.dvm.VM;
 import com.github.unidbg.linux.file.SimpleFileIO;
 import com.github.unidbg.memory.MemoryBlock;
@@ -49,6 +53,7 @@ public final class AndroidSoRuntime extends AbstractJni
     private static final String VIRTUAL_OUTPUT_PATH =
             "/sdcard/so-signer/output";
 
+    private final String imei;
     private AndroidEmulator emulator;
     private VM vm;
     private DvmClass nativeMediaProcessor;
@@ -63,7 +68,8 @@ public final class AndroidSoRuntime extends AbstractJni
      * <p>The custom library is currently built for ARM32. A future ARM64
      * build must use {@code for64Bit()} and a matching native resource.</p>
      */
-    public AndroidSoRuntime() throws IOException {
+    public AndroidSoRuntime(String imei) throws IOException {
+        this.imei = Imei.complete(imei);
         long initializationStarted = System.nanoTime();
         try {
             AndroidEmulatorBuilder builder =
@@ -108,6 +114,47 @@ public final class AndroidSoRuntime extends AbstractJni
 
     public long getInitializationNanos() {
         return initializationNanos;
+    }
+
+    /**
+     * Supplies the configured IMEI when native code calls Android telephony
+     * APIs through JNI. IMEI is not an Android system property in unidbg.
+     */
+    @Override
+    public DvmObject<?> callObjectMethod(
+            BaseVM currentVm,
+            DvmObject<?> object,
+            String signature,
+            VarArg arguments) {
+        if (isImeiMethod(signature)) {
+            return new StringObject(currentVm, imei);
+        }
+        return super.callObjectMethod(
+                currentVm, object, signature, arguments);
+    }
+
+    @Override
+    public DvmObject<?> callObjectMethodV(
+            BaseVM currentVm,
+            DvmObject<?> object,
+            String signature,
+            VaList arguments) {
+        if (isImeiMethod(signature)) {
+            return new StringObject(currentVm, imei);
+        }
+        return super.callObjectMethodV(
+                currentVm, object, signature, arguments);
+    }
+
+    private boolean isImeiMethod(String signature) {
+        return "android/telephony/TelephonyManager->getDeviceId()Ljava/lang/String;"
+                .equals(signature)
+                || "android/telephony/TelephonyManager->getDeviceId(I)Ljava/lang/String;"
+                .equals(signature)
+                || "android/telephony/TelephonyManager->getImei()Ljava/lang/String;"
+                .equals(signature)
+                || "android/telephony/TelephonyManager->getImei(I)Ljava/lang/String;"
+                .equals(signature);
     }
 
     private void configureBackend(AndroidEmulatorBuilder builder) {

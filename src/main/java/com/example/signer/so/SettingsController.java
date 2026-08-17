@@ -14,6 +14,7 @@ import javafx.stage.Window;
 public final class SettingsController {
 
     private Path lastOpenedDirectory;
+    private String imei;
 
     @FXML
     private CheckBox videoCheckBox;
@@ -37,13 +38,14 @@ public final class SettingsController {
         audioCheckBox.setSelected(settings.isAudioEnabled());
         outputDirectoryField.setText(settings.getOutputDirectory().toString());
         lastOpenedDirectory = settings.getLastOpenedDirectory();
+        imei = settings.getImei();
     }
 
     public AppSettings getSettings() {
         String outputValue = outputDirectoryField.getText().strip();
         Path outputDirectory = Path.of(outputValue);
         return new AppSettings(videoCheckBox.isSelected(), audioCheckBox.isSelected(),
-                outputDirectory, lastOpenedDirectory);
+                outputDirectory, lastOpenedDirectory, imei);
     }
 
     @FXML

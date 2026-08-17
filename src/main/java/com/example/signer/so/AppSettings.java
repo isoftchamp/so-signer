@@ -10,22 +10,24 @@ public final class AppSettings {
     private boolean audioEnabled;
     private Path outputDirectory;
     private Path lastOpenedDirectory;
+    private String imei;
 
     public AppSettings() {
-        this(true, false, DEFAULT_OUTPUT_DIRECTORY, null);
+        this(true, false, DEFAULT_OUTPUT_DIRECTORY, null, "");
     }
 
     public AppSettings(boolean videoEnabled, boolean audioEnabled, Path outputDirectory,
-                       Path lastOpenedDirectory) {
+                       Path lastOpenedDirectory, String imei) {
         this.videoEnabled = videoEnabled;
         this.audioEnabled = audioEnabled;
         this.outputDirectory = outputDirectory;
         this.lastOpenedDirectory = lastOpenedDirectory;
+        this.imei = imei;
     }
 
     public AppSettings copy() {
         return new AppSettings(videoEnabled, audioEnabled, outputDirectory,
-                lastOpenedDirectory);
+                lastOpenedDirectory, imei);
     }
 
     public boolean isVideoEnabled() {
@@ -58,5 +60,13 @@ public final class AppSettings {
 
     public void setLastOpenedDirectory(Path lastOpenedDirectory) {
         this.lastOpenedDirectory = lastOpenedDirectory;
+    }
+
+    public String getImei() {
+        return imei;
+    }
+
+    public void setImei(String imei) {
+        this.imei = imei;
     }
 }

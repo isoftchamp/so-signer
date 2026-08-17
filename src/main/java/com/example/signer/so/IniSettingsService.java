@@ -54,6 +54,11 @@ public final class IniSettingsService {
             if (inputDirectory != null && !inputDirectory.isBlank()) {
                 settings.setLastOpenedDirectory(Path.of(inputDirectory.strip()));
             }
+
+            String imei = configuration.getString("device.imei");
+            if (imei != null && imei.strip().matches("\\d{14,15}")) {
+                settings.setImei(Imei.complete(imei));
+            }
         } catch (IOException | ConfigurationException
                  | InvalidPathException exception) {
             System.err.println("Could not read settings from " + settingsPath + ": "
@@ -76,6 +81,8 @@ public final class IniSettingsService {
                         ? ""
                         : settings.getLastOpenedDirectory()
                                 .toAbsolutePath().toString());
+        configuration.setProperty("device.imei",
+                settings.getImei() == null ? "" : settings.getImei());
 
         try (BufferedWriter writer = Files.newBufferedWriter(
                 temporaryPath, StandardCharsets.UTF_8)) {

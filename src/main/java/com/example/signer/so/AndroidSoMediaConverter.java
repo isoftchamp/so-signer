@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Conversion boundary backed by an emulated Android runtime.
@@ -21,6 +22,12 @@ import java.util.Locale;
 public final class AndroidSoMediaConverter implements MediaConverter {
 
     private AndroidSoRuntime runtime;
+    private String imei;
+    private String runtimeImei;
+
+    public synchronized void setImei(String imei) {
+        this.imei = Imei.complete(imei);
+    }
 
     @Override
     public synchronized void convert(Path input, Path output) throws Exception {
@@ -63,8 +70,14 @@ public final class AndroidSoMediaConverter implements MediaConverter {
     }
 
     private AndroidSoRuntime runtime() throws IOException {
-        if (runtime == null) {
-            runtime = new AndroidSoRuntime();
+        if (runtime == null || !Objects.equals(runtimeImei, imei)) {
+            if (runtime != null) {
+                runtime.close();
+                runtime = null;
+                runtimeImei = null;
+            }
+            runtime = new AndroidSoRuntime(imei);
+            runtimeImei = imei;
             System.out.println("[Custom SO] Emulator backend: "
                     + runtime.getBackendName());
             System.out.println("[Performance] Emulator initialization: "
@@ -149,6 +162,7 @@ public final class AndroidSoMediaConverter implements MediaConverter {
         if (runtime != null) {
             runtime.close();
             runtime = null;
+            runtimeImei = null;
         }
     }
 }

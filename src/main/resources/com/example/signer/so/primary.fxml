@@ -3,8 +3,10 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Separator?>
 <?import javafx.scene.control.TableColumn?>
 <?import javafx.scene.control.TableView?>
+<?import javafx.scene.control.TextField?>
 <?import javafx.scene.control.ToolBar?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.HBox?>
@@ -21,6 +23,12 @@
             <Button fx:id="settingsButton" mnemonicParsing="false" onAction="#openSettings" text="Settings" />
             <Button fx:id="removeButton" mnemonicParsing="false" onAction="#removeSelectedFiles" text="Remove" />
             <Button fx:id="clearButton" mnemonicParsing="false" onAction="#clearFiles" text="Clear" />
+            <Separator orientation="VERTICAL" />
+            <Label text="IMEI" />
+            <TextField fx:id="imeiField" prefColumnCount="14"
+                       promptText="Enter first 14 digits" />
+            <Label fx:id="imeiChecksumLabel" styleClass="imei-complete"
+                   text="Complete: —" />
         </ToolBar>
     </top>
     <center>

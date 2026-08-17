@@ -20,6 +20,11 @@
     -fx-padding: 10px 16px;
 }
 
+.imei-complete {
+    -fx-text-fill: #475467;
+    -fx-font-family: "Consolas";
+}
+
 .button {
     -fx-background-color: white;
     -fx-border-color: #cbd2d9;

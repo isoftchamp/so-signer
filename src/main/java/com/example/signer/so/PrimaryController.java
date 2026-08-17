@@ -27,6 +27,8 @@ import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextField;
+import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
@@ -37,7 +39,8 @@ public final class PrimaryController {
             FXCollections.observableArrayList();
     private final MediaScanner mediaScanner = new MediaScanner();
     private final IniSettingsService settingsService = new IniSettingsService();
-    private final MediaConverter mediaConverter = new AndroidSoMediaConverter();
+    private final AndroidSoMediaConverter mediaConverter =
+            new AndroidSoMediaConverter();
     private final Service<Void> conversionService = new Service<Void>() {
         @Override
         protected Task<Void> createTask() {
@@ -79,6 +82,12 @@ public final class PrimaryController {
     private Button clearButton;
 
     @FXML
+    private TextField imeiField;
+
+    @FXML
+    private Label imeiChecksumLabel;
+
+    @FXML
     private Label folderLabel;
 
     @FXML
@@ -90,6 +99,8 @@ public final class PrimaryController {
         configureTable();
         configureConversionService();
         configureButtons();
+        configureImeiField();
+        loadSavedImei();
         fileTable.setItems(files);
         updateSummary();
 
@@ -177,7 +188,53 @@ public final class PrimaryController {
         if (files.isEmpty() || conversionService.isRunning()) {
             return;
         }
+        try {
+            String imei = completeImeiInput();
+            mediaConverter.setImei(imei);
+            settings.setImei(imei);
+            settingsService.save(settings);
+        } catch (IllegalArgumentException exception) {
+            showError("Invalid IMEI", exception.getMessage());
+            imeiField.requestFocus();
+            return;
+        } catch (IOException exception) {
+            showError("Could not save IMEI", exception.getMessage());
+            return;
+        }
         conversionService.restart();
+    }
+
+    private void configureImeiField() {
+        imeiField.setTextFormatter(new TextFormatter<String>(change ->
+                change.getControlNewText().matches("\\d{0,14}")
+                        ? change : null));
+        imeiField.setTooltip(new Tooltip(
+                "Enter the first 14 IMEI digits. The complete IMEI is shown beside this field."));
+        imeiField.textProperty().addListener(
+                (observable, oldValue, newValue) -> updateImeiChecksumLabel());
+        updateImeiChecksumLabel();
+    }
+
+    private void loadSavedImei() {
+        String savedImei = settings.getImei();
+        if (savedImei != null && savedImei.matches("\\d{15}")) {
+            imeiField.setText(savedImei.substring(0, 14));
+        }
+    }
+
+    private void updateImeiChecksumLabel() {
+        if (imeiField.getText().length() == 14) {
+            imeiChecksumLabel.setText(
+                    "Complete: " + Imei.complete(imeiField.getText()));
+        } else {
+            imeiChecksumLabel.setText("Complete: —");
+        }
+    }
+
+    private String completeImeiInput() {
+        String imei = Imei.complete(imeiField.getText());
+        imeiChecksumLabel.setText("Complete: " + imei);
+        return imei;
     }
 
     private Task<Void> createConversionTask() {
@@ -263,6 +320,8 @@ public final class PrimaryController {
                         .or(conversionService.runningProperty()));
         clearButton.disableProperty().bind(
                 Bindings.isEmpty(files).or(conversionService.runningProperty()));
+        imeiField.disableProperty().bind(
+                conversionService.runningProperty());
     }
 
     private void refreshFiles() {
