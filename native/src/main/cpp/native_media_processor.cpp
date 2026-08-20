@@ -11,7 +11,7 @@ extern "C" JNIEXPORT int so_signer_append_file_crc32(
 
 namespace {
 
-constexpr char kNativeVersion[] = "so-signer-native/3";
+constexpr char kNativeVersion[] = "so-signer-native/4";
 constexpr std::size_t kReadBufferSize = 1024 * 1024;
 constexpr std::uint32_t kCrc32cPolynomial = 0x82f63b78U;
 constexpr std::array<unsigned char, 4> kHashSeparator = {
@@ -94,6 +94,261 @@ jstring nativeVersion(JNIEnv* environment, jclass /* type */) {
     return environment->NewStringUTF(kNativeVersion);
 }
 
+jstring ProbeFailure(JNIEnv* environment, const char* step) {
+    return environment->NewStringUTF(step);
+}
+
+bool SameString(
+        JNIEnv* environment,
+        jstring actual,
+        jstring expected) {
+    if (actual == nullptr || expected == nullptr) {
+        return actual == expected;
+    }
+    const char* actual_chars = environment->GetStringUTFChars(
+            actual, nullptr);
+    const char* expected_chars = environment->GetStringUTFChars(
+            expected, nullptr);
+    if (actual_chars == nullptr || expected_chars == nullptr) {
+        if (actual_chars != nullptr) {
+            environment->ReleaseStringUTFChars(actual, actual_chars);
+        }
+        if (expected_chars != nullptr) {
+            environment->ReleaseStringUTFChars(expected, expected_chars);
+        }
+        return false;
+    }
+    std::size_t index = 0;
+    while (actual_chars[index] != '\0'
+            && actual_chars[index] == expected_chars[index]) {
+        ++index;
+    }
+    const bool equal = actual_chars[index] == expected_chars[index];
+    environment->ReleaseStringUTFChars(actual, actual_chars);
+    environment->ReleaseStringUTFChars(expected, expected_chars);
+    return equal;
+}
+
+/**
+ * Exercises the Android Java IMEI acquisition path from native JNI. Keeping
+ * this probe in the test library verifies the same FindClass/GetMethodID and
+ * Call*Method flow used by a production Android library.
+ */
+jstring probeTelephony(
+        JNIEnv* environment,
+        jclass /* type */,
+        jobject context,
+        jstring expected_imei) {
+    if (context == nullptr || expected_imei == nullptr) {
+        return ProbeFailure(environment, "ERROR:arguments");
+    }
+
+    jclass context_class = environment->FindClass(
+            "android/content/Context");
+    jfieldID telephony_service_field = environment->GetStaticFieldID(
+            context_class,
+            "TELEPHONY_SERVICE",
+            "Ljava/lang/String;");
+    jstring telephony_service = static_cast<jstring>(
+            environment->GetStaticObjectField(
+                    context_class, telephony_service_field));
+    jmethodID get_system_service = environment->GetMethodID(
+            context_class,
+            "getSystemService",
+            "(Ljava/lang/String;)Ljava/lang/Object;");
+    jvalue service_arguments[1]{};
+    service_arguments[0].l = telephony_service;
+    jobject telephony_manager = environment->CallObjectMethodA(
+            context, get_system_service, service_arguments);
+    if (telephony_manager == nullptr) {
+        return ProbeFailure(environment, "ERROR:telephony-service");
+    }
+
+    jstring permission = environment->NewStringUTF(
+            "android.permission.READ_PHONE_STATE");
+    jmethodID check_permission = environment->GetMethodID(
+            context_class,
+            "checkSelfPermission",
+            "(Ljava/lang/String;)I");
+    jvalue permission_arguments[1]{};
+    permission_arguments[0].l = permission;
+    if (environment->CallIntMethodA(
+            context, check_permission, permission_arguments) != 0) {
+        return ProbeFailure(environment, "ERROR:permission");
+    }
+
+    jclass telephony_class = environment->FindClass(
+            "android/telephony/TelephonyManager");
+    jmethodID get_imei = environment->GetMethodID(
+            telephony_class,
+            "getImei",
+            "()Ljava/lang/String;");
+    jmethodID get_imei_for_slot = environment->GetMethodID(
+            telephony_class,
+            "getImei",
+            "(I)Ljava/lang/String;");
+    jmethodID get_device_id = environment->GetMethodID(
+            telephony_class,
+            "getDeviceId",
+            "()Ljava/lang/String;");
+    jmethodID get_device_id_for_slot = environment->GetMethodID(
+            telephony_class,
+            "getDeviceId",
+            "(I)Ljava/lang/String;");
+    jmethodID get_phone_count = environment->GetMethodID(
+            telephony_class,
+            "getPhoneCount",
+            "()I");
+    jmethodID create_for_subscription = environment->GetMethodID(
+            telephony_class,
+            "createForSubscriptionId",
+            "(I)Landroid/telephony/TelephonyManager;");
+
+    if (!SameString(
+            environment,
+            static_cast<jstring>(environment->CallObjectMethodA(
+                    telephony_manager, get_imei, nullptr)),
+            expected_imei)) {
+        return ProbeFailure(environment, "ERROR:getImei");
+    }
+    jvalue slot_zero_arguments[1]{};
+    slot_zero_arguments[0].i = 0;
+    if (!SameString(
+            environment,
+            static_cast<jstring>(environment->CallObjectMethodA(
+                    telephony_manager,
+                    get_imei_for_slot,
+                    slot_zero_arguments)),
+            expected_imei)) {
+        return ProbeFailure(environment, "ERROR:getImei-slot0");
+    }
+    jvalue slot_one_arguments[1]{};
+    slot_one_arguments[0].i = 1;
+    if (environment->CallObjectMethodA(
+            telephony_manager,
+            get_imei_for_slot,
+            slot_one_arguments) != nullptr) {
+        return ProbeFailure(environment, "ERROR:getImei-invalid-slot");
+    }
+    if (!SameString(
+            environment,
+            static_cast<jstring>(environment->CallObjectMethodA(
+                    telephony_manager, get_device_id, nullptr)),
+            expected_imei)
+            || !SameString(
+                    environment,
+                    static_cast<jstring>(environment->CallObjectMethodA(
+                            telephony_manager,
+                            get_device_id_for_slot,
+                            slot_zero_arguments)),
+                    expected_imei)) {
+        return ProbeFailure(environment, "ERROR:getDeviceId");
+    }
+    if (environment->CallIntMethodA(
+            telephony_manager, get_phone_count, nullptr) != 1) {
+        return ProbeFailure(environment, "ERROR:phone-count");
+    }
+
+    jclass subscription_class = environment->FindClass(
+            "android/telephony/SubscriptionManager");
+    jmethodID subscription_from = environment->GetStaticMethodID(
+            subscription_class,
+            "from",
+            "(Landroid/content/Context;)"
+            "Landroid/telephony/SubscriptionManager;");
+    jvalue context_arguments[1]{};
+    context_arguments[0].l = context;
+    jobject subscription_manager =
+            environment->CallStaticObjectMethodA(
+                    subscription_class,
+                    subscription_from,
+                    context_arguments);
+    if (subscription_manager == nullptr) {
+        return ProbeFailure(environment, "ERROR:subscription-service");
+    }
+
+    jmethodID get_default_subscription = environment->GetStaticMethodID(
+            subscription_class,
+            "getDefaultSubscriptionId",
+            "()I");
+    const jint default_subscription =
+            environment->CallStaticIntMethod(
+                    subscription_class,
+                    get_default_subscription);
+    if (default_subscription != 1) {
+        return ProbeFailure(environment, "ERROR:default-subscription");
+    }
+
+    jmethodID get_active_count = environment->GetMethodID(
+            subscription_class,
+            "getActiveSubscriptionInfoCount",
+            "()I");
+    if (environment->CallIntMethodA(
+            subscription_manager, get_active_count, nullptr) != 1) {
+        return ProbeFailure(environment, "ERROR:subscription-count");
+    }
+
+    jmethodID get_info_for_slot = environment->GetMethodID(
+            subscription_class,
+            "getActiveSubscriptionInfoForSimSlotIndex",
+            "(I)Landroid/telephony/SubscriptionInfo;");
+    jobject subscription_info = environment->CallObjectMethodA(
+            subscription_manager,
+            get_info_for_slot,
+            slot_zero_arguments);
+    if (subscription_info == nullptr) {
+        return ProbeFailure(environment, "ERROR:subscription-info");
+    }
+    jclass subscription_info_class = environment->FindClass(
+            "android/telephony/SubscriptionInfo");
+    jmethodID get_subscription_id = environment->GetMethodID(
+            subscription_info_class,
+            "getSubscriptionId",
+            "()I");
+    jmethodID get_slot_index = environment->GetMethodID(
+            subscription_info_class,
+            "getSimSlotIndex",
+            "()I");
+    if (environment->CallIntMethodA(
+            subscription_info, get_subscription_id, nullptr) != 1
+            || environment->CallIntMethodA(
+                    subscription_info, get_slot_index, nullptr) != 0) {
+        return ProbeFailure(environment, "ERROR:subscription-routing");
+    }
+
+    jvalue subscription_arguments[1]{};
+    subscription_arguments[0].i = default_subscription;
+    jobject subscription_telephony = environment->CallObjectMethodA(
+            telephony_manager,
+            create_for_subscription,
+            subscription_arguments);
+    if (!SameString(
+            environment,
+            static_cast<jstring>(environment->CallObjectMethodA(
+                    subscription_telephony, get_imei, nullptr)),
+            expected_imei)) {
+        return ProbeFailure(environment, "ERROR:subscription-imei");
+    }
+
+    const char* expected_chars = environment->GetStringUTFChars(
+            expected_imei, nullptr);
+    if (expected_chars == nullptr) {
+        return ProbeFailure(environment, "ERROR:result");
+    }
+    std::array<char, 32> result{};
+    result[0] = 'O';
+    result[1] = 'K';
+    result[2] = ':';
+    std::size_t result_index = 3;
+    while (expected_chars[result_index - 3] != '\0'
+            && result_index + 1 < result.size()) {
+        result[result_index] = expected_chars[result_index - 3];
+        ++result_index;
+    }
+    environment->ReleaseStringUTFChars(expected_imei, expected_chars);
+    return environment->NewStringUTF(result.data());
+}
+
 jint appendFileCrc32(
         JNIEnv* environment,
         jclass /* type */,
@@ -113,28 +368,35 @@ jint appendFileCrc32(
     return status;
 }
 
-/*
- * These C++ function names intentionally match the native method declarations
- * in NativeMediaProcessor.java. RegisterNatives connects each Java
- * name/signature pair to its function pointer when JNI_OnLoad runs.
- */
-const JNINativeMethod kNativeMethods[] = {
-    {
-        "nativeVersion",
-        "()Ljava/lang/String;",
-        reinterpret_cast<void*>(nativeVersion)
-    },
-    {
-        "appendFileCrc32",
-        "(Ljava/lang/String;)I",
-        reinterpret_cast<void*>(appendFileCrc32)
-    }
-};
-
 }  // namespace
 
 extern "C" JNIEXPORT const char* so_signer_native_version() {
     return kNativeVersion;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_example_signer_so_NativeMediaProcessor_nativeVersion(
+        JNIEnv* environment,
+        jclass type) {
+    return nativeVersion(environment, type);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_example_signer_so_NativeMediaProcessor_probeTelephony(
+        JNIEnv* environment,
+        jclass type,
+        jobject context,
+        jstring expected_imei) {
+    return probeTelephony(
+            environment, type, context, expected_imei);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_example_signer_so_NativeMediaProcessor_appendFileCrc32(
+        JNIEnv* environment,
+        jclass type,
+        jstring output_path) {
+    return appendFileCrc32(environment, type, output_path);
 }
 
 /**
@@ -218,26 +480,6 @@ extern "C" JNIEXPORT int so_signer_append_file_crc32(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-JNI_OnLoad(JavaVM* virtualMachine, void* /* reserved */) {
-    JNIEnv* environment = nullptr;
-    if (virtualMachine->GetEnv(
-            reinterpret_cast<void**>(&environment),
-            JNI_VERSION_1_6) != JNI_OK) {
-        return JNI_ERR;
-    }
-
-    jclass processorClass = environment->FindClass(
-            "com/example/signer/so/NativeMediaProcessor");
-    if (processorClass == nullptr) {
-        return JNI_ERR;
-    }
-
-    constexpr jint methodCount = static_cast<jint>(
-            sizeof(kNativeMethods) / sizeof(kNativeMethods[0]));
-    if (environment->RegisterNatives(
-            processorClass, kNativeMethods, methodCount) != JNI_OK) {
-        return JNI_ERR;
-    }
-
+JNI_OnLoad(JavaVM* /* virtualMachine */, void* /* reserved */) {
     return JNI_VERSION_1_6;
 }

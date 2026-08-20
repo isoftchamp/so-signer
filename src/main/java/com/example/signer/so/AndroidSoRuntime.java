@@ -12,6 +12,7 @@ import com.github.unidbg.file.linux.AndroidFileIO;
 import com.github.unidbg.linux.android.AndroidEmulatorBuilder;
 import com.github.unidbg.linux.android.AndroidResolver;
 import com.github.unidbg.linux.android.dvm.AbstractJni;
+import com.github.unidbg.linux.android.dvm.ArrayListObject;
 import com.github.unidbg.linux.android.dvm.BaseVM;
 import com.github.unidbg.linux.android.dvm.DalvikModule;
 import com.github.unidbg.linux.android.dvm.DvmClass;
@@ -30,6 +31,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Owns the in-process Android emulator used to load the custom ARM library.
@@ -52,8 +55,21 @@ public final class AndroidSoRuntime extends AbstractJni
             NativeMediaProcessor.class.getName().replace('.', '/');
     private static final String VIRTUAL_OUTPUT_PATH =
             "/sdcard/so-signer/output";
+    private static final String TELEPHONY_SERVICE = "phone";
+    private static final String TELEPHONY_MANAGER_CLASS =
+            "android/telephony/TelephonyManager";
+    private static final String SUBSCRIPTION_SERVICE =
+            "telephony_subscription_service";
+    private static final String SUBSCRIPTION_MANAGER_CLASS =
+            "android/telephony/SubscriptionManager";
+    private static final String SUBSCRIPTION_INFO_CLASS =
+            "android/telephony/SubscriptionInfo";
+    private static final String READ_PHONE_STATE =
+            "android.permission.READ_PHONE_STATE";
+    private static final String READ_PRIVILEGED_PHONE_STATE =
+            "android.permission.READ_PRIVILEGED_PHONE_STATE";
 
-    private final String imei;
+    private final TelephonyProfile telephonyProfile;
     private AndroidEmulator emulator;
     private VM vm;
     private DvmClass nativeMediaProcessor;
@@ -68,8 +84,9 @@ public final class AndroidSoRuntime extends AbstractJni
      * <p>The custom library is currently built for ARM32. A future ARM64
      * build must use {@code for64Bit()} and a matching native resource.</p>
      */
-    public AndroidSoRuntime(String imei) throws IOException {
-        this.imei = Imei.complete(imei);
+    public AndroidSoRuntime(TelephonyProfile telephonyProfile)
+            throws IOException {
+        this.telephonyProfile = telephonyProfile;
         long initializationStarted = System.nanoTime();
         try {
             AndroidEmulatorBuilder builder =
@@ -77,16 +94,17 @@ public final class AndroidSoRuntime extends AbstractJni
             builder.setProcessName("com.example.signer.so");
             configureBackend(builder);
             emulator = builder.build();
-            emulator.getMemory().setLibraryResolver(new AndroidResolver(23));
+            emulator.getMemory().setLibraryResolver(
+                    new AndroidResolver(TelephonyProfile.ANDROID_API_LEVEL));
             emulator.getSyscallHandler().addIOResolver(this);
 
             vm = emulator.createDalvikVM();
-            vm.setVerbose(false);
+            vm.setVerbose(Boolean.getBoolean("so.signer.jni.verbose"));
             vm.setJni(this);
 
             /*
-             * Resolve the synthetic class before JNI_OnLoad because the
-             * library dynamically registers its JNI methods there.
+             * Resolve the synthetic class before loading so unidbg can bind
+             * its exported Java_* JNI entry points.
              */
             nativeMediaProcessor = vm.resolveClass(NATIVE_CLASS_NAME);
             File library = resolveLibraryFile();
@@ -116,18 +134,32 @@ public final class AndroidSoRuntime extends AbstractJni
         return initializationNanos;
     }
 
-    /**
-     * Supplies the configured IMEI when native code calls Android telephony
-     * APIs through JNI. IMEI is not an Android system property in unidbg.
-     */
+    @Override
+    public DvmObject<?> getStaticObjectField(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature) {
+        if ("android/content/Context->TELEPHONY_SERVICE:Ljava/lang/String;"
+                .equals(signature)) {
+            return new StringObject(currentVm, TELEPHONY_SERVICE);
+        }
+        if ("android/content/Context->TELEPHONY_SUBSCRIPTION_SERVICE:"
+                .concat("Ljava/lang/String;").equals(signature)) {
+            return new StringObject(currentVm, SUBSCRIPTION_SERVICE);
+        }
+        return super.getStaticObjectField(currentVm, dvmClass, signature);
+    }
+
     @Override
     public DvmObject<?> callObjectMethod(
             BaseVM currentVm,
             DvmObject<?> object,
             String signature,
             VarArg arguments) {
-        if (isImeiMethod(signature)) {
-            return new StringObject(currentVm, imei);
+        DvmObject<?> telephonyObject = handleTelephonyObjectMethod(
+                currentVm, object, signature, arguments);
+        if (telephonyObject != TelephonyDispatch.NOT_HANDLED) {
+            return telephonyObject;
         }
         return super.callObjectMethod(
                 currentVm, object, signature, arguments);
@@ -139,11 +171,373 @@ public final class AndroidSoRuntime extends AbstractJni
             DvmObject<?> object,
             String signature,
             VaList arguments) {
-        if (isImeiMethod(signature)) {
-            return new StringObject(currentVm, imei);
+        DvmObject<?> telephonyObject = handleTelephonyObjectMethod(
+                currentVm, object, signature, arguments);
+        if (telephonyObject != TelephonyDispatch.NOT_HANDLED) {
+            return telephonyObject;
         }
         return super.callObjectMethodV(
                 currentVm, object, signature, arguments);
+    }
+
+    @Override
+    public DvmObject<?> callStaticObjectMethod(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature,
+            VarArg arguments) {
+        DvmObject<?> result = handleStaticTelephonyObjectMethod(
+                signature, arguments);
+        return result == TelephonyDispatch.NOT_HANDLED
+                ? super.callStaticObjectMethod(
+                        currentVm, dvmClass, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public DvmObject<?> callStaticObjectMethodV(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature,
+            VaList arguments) {
+        DvmObject<?> result = handleStaticTelephonyObjectMethod(
+                signature, arguments);
+        return result == TelephonyDispatch.NOT_HANDLED
+                ? super.callStaticObjectMethodV(
+                        currentVm, dvmClass, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public int callIntMethod(
+            BaseVM currentVm,
+            DvmObject<?> object,
+            String signature,
+            VarArg arguments) {
+        Integer result = handleTelephonyIntMethod(
+                object, signature, arguments);
+        return result == null
+                ? super.callIntMethod(currentVm, object, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public int callIntMethodV(
+            BaseVM currentVm,
+            DvmObject<?> object,
+            String signature,
+            VaList arguments) {
+        Integer result = handleTelephonyIntMethod(
+                object, signature, arguments);
+        return result == null
+                ? super.callIntMethodV(currentVm, object, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public int callStaticIntMethod(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature,
+            VarArg arguments) {
+        Integer result = handleStaticTelephonyIntMethod(
+                signature, arguments);
+        return result == null
+                ? super.callStaticIntMethod(
+                        currentVm, dvmClass, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public int callStaticIntMethodV(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature,
+            VaList arguments) {
+        Integer result = handleStaticTelephonyIntMethod(
+                signature, arguments);
+        return result == null
+                ? super.callStaticIntMethodV(
+                        currentVm, dvmClass, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public boolean callStaticBooleanMethod(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature,
+            VarArg arguments) {
+        Boolean result = handleStaticTelephonyBooleanMethod(
+                signature, arguments);
+        return result == null
+                ? super.callStaticBooleanMethod(
+                        currentVm, dvmClass, signature, arguments)
+                : result;
+    }
+
+    @Override
+    public boolean callStaticBooleanMethodV(
+            BaseVM currentVm,
+            DvmClass dvmClass,
+            String signature,
+            VaList arguments) {
+        Boolean result = handleStaticTelephonyBooleanMethod(
+                signature, arguments);
+        return result == null
+                ? super.callStaticBooleanMethodV(
+                        currentVm, dvmClass, signature, arguments)
+                : result;
+    }
+
+    private DvmObject<?> handleTelephonyObjectMethod(
+            BaseVM currentVm,
+            DvmObject<?> object,
+            String signature,
+            VarArg arguments) {
+        if (isSystemServiceMethod(signature)) {
+            return resolveSystemService(arguments);
+        }
+        if ("android/telephony/TelephonyManager->createForSubscriptionId(I)"
+                .concat("Landroid/telephony/TelephonyManager;")
+                .equals(signature)) {
+            return createTelephonyManager(arguments.getIntArg(0));
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->getActiveSubscriptionInfoList()Ljava/util/List;")
+                .equals(signature)) {
+            enforcePhoneStatePermission();
+            return new ArrayListObject(vm, createSubscriptionInfoObjects());
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->getActiveSubscriptionInfoForSimSlotIndex(I)")
+                .concat("Landroid/telephony/SubscriptionInfo;")
+                .equals(signature)) {
+            enforcePhoneStatePermission();
+            int subscriptionId = telephonyProfile.getSubscriptionIdForSlot(
+                    arguments.getIntArg(0));
+            return subscriptionId < 0
+                    ? null : createSubscriptionInfo(subscriptionId);
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->getActiveSubscriptionInfo(I)")
+                .concat("Landroid/telephony/SubscriptionInfo;")
+                .equals(signature)) {
+            enforcePhoneStatePermission();
+            int subscriptionId = arguments.getIntArg(0);
+            return telephonyProfile.getSlotIndexForSubscription(
+                    subscriptionId) < 0
+                    ? null : createSubscriptionInfo(subscriptionId);
+        }
+        if (isImeiMethod(signature)) {
+            enforcePhoneStatePermission();
+            String imei = resolveImei(object, signature, arguments);
+            return imei == null ? null : new StringObject(currentVm, imei);
+        }
+        return TelephonyDispatch.NOT_HANDLED;
+    }
+
+    private DvmObject<?> handleStaticTelephonyObjectMethod(
+            String signature,
+            VarArg arguments) {
+        if ("android/telephony/TelephonyManager->getDefault()"
+                .concat("Landroid/telephony/TelephonyManager;")
+                .equals(signature)) {
+            return createTelephonyManager(
+                    telephonyProfile.getDefaultSubscriptionId());
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->from(Landroid/content/Context;)")
+                .concat("Landroid/telephony/SubscriptionManager;")
+                .equals(signature)) {
+            return createSubscriptionManager();
+        }
+        return TelephonyDispatch.NOT_HANDLED;
+    }
+
+    private Integer handleTelephonyIntMethod(
+            DvmObject<?> object,
+            String signature,
+            VarArg arguments) {
+        if ("android/telephony/TelephonyManager->getPhoneCount()I"
+                .equals(signature)) {
+            return telephonyProfile.getSlotCount();
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->getActiveSubscriptionInfoCount()I")
+                .equals(signature)
+                || "android/telephony/SubscriptionManager"
+                .concat("->getActiveSubscriptionInfoCountMax()I")
+                .equals(signature)) {
+            enforcePhoneStatePermission();
+            return telephonyProfile.getSlotCount();
+        }
+        Object value = object == null ? null : object.getValue();
+        if (value instanceof SubscriptionInfoState) {
+            SubscriptionInfoState info = (SubscriptionInfoState) value;
+            if ("android/telephony/SubscriptionInfo->getSubscriptionId()I"
+                    .equals(signature)) {
+                return info.subscriptionId;
+            }
+            if ("android/telephony/SubscriptionInfo->getSimSlotIndex()I"
+                    .equals(signature)) {
+                return info.slotIndex;
+            }
+        }
+        if (signature.endsWith(
+                "->checkSelfPermission(Ljava/lang/String;)I")
+                || signature.endsWith(
+                        "->checkCallingOrSelfPermission(Ljava/lang/String;)I")
+                || signature.endsWith(
+                        "->checkCallingPermission(Ljava/lang/String;)I")) {
+            DvmObject<?> permission = arguments.getObjectArg(0);
+            if (permission instanceof StringObject
+                    && isPhoneStatePermission(
+                            ((StringObject) permission).getValue())) {
+                return telephonyProfile.isPhoneStatePermissionGranted()
+                        ? 0 : -1;
+            }
+        }
+        return null;
+    }
+
+    private Integer handleStaticTelephonyIntMethod(
+            String signature,
+            VarArg arguments) {
+        if (signature.endsWith(
+                "ContextCompat->checkSelfPermission("
+                        + "Landroid/content/Context;Ljava/lang/String;)I")) {
+            DvmObject<?> permission = arguments.getObjectArg(1);
+            if (permission instanceof StringObject
+                    && isPhoneStatePermission(
+                            ((StringObject) permission).getValue())) {
+                return telephonyProfile.isPhoneStatePermissionGranted()
+                        ? 0 : -1;
+            }
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->getDefaultSubscriptionId()I")
+                .equals(signature)
+                || "android/telephony/SubscriptionManager"
+                .concat("->getDefaultDataSubscriptionId()I")
+                .equals(signature)
+                || "android/telephony/SubscriptionManager"
+                .concat("->getDefaultSmsSubscriptionId()I")
+                .equals(signature)
+                || "android/telephony/SubscriptionManager"
+                .concat("->getDefaultVoiceSubscriptionId()I")
+                .equals(signature)
+                || "android/telephony/SubscriptionManager->getDefaultSubId()I"
+                .equals(signature)) {
+            return telephonyProfile.getDefaultSubscriptionId();
+        }
+        return null;
+    }
+
+    private Boolean handleStaticTelephonyBooleanMethod(
+            String signature,
+            VarArg arguments) {
+        if ("android/telephony/SubscriptionManager"
+                .concat("->isValidSubscriptionId(I)Z")
+                .equals(signature)) {
+            return telephonyProfile.getSlotIndexForSubscription(
+                    arguments.getIntArg(0)) >= 0;
+        }
+        if ("android/telephony/SubscriptionManager"
+                .concat("->isValidSlotIndex(I)Z")
+                .equals(signature)) {
+            int slotIndex = arguments.getIntArg(0);
+            return slotIndex >= 0
+                    && slotIndex < telephonyProfile.getSlotCount();
+        }
+        return null;
+    }
+
+    private DvmObject<?> resolveSystemService(VarArg arguments) {
+        DvmObject<?> service = arguments.getObjectArg(0);
+        if (service instanceof StringObject) {
+            String serviceName = ((StringObject) service).getValue();
+            if (TELEPHONY_SERVICE.equals(serviceName)) {
+                return createTelephonyManager(
+                        telephonyProfile.getDefaultSubscriptionId());
+            }
+            if (SUBSCRIPTION_SERVICE.equals(serviceName)) {
+                return createSubscriptionManager();
+            }
+            return TelephonyDispatch.NOT_HANDLED;
+        }
+        if (service instanceof DvmClass) {
+            String className = ((DvmClass) service).getClassName();
+            if (TELEPHONY_MANAGER_CLASS.equals(className)) {
+                return createTelephonyManager(
+                        telephonyProfile.getDefaultSubscriptionId());
+            }
+            if (SUBSCRIPTION_MANAGER_CLASS.equals(className)) {
+                return createSubscriptionManager();
+            }
+            return TelephonyDispatch.NOT_HANDLED;
+        }
+        return TelephonyDispatch.NOT_HANDLED;
+    }
+
+    private DvmObject<?> createTelephonyManager(int subscriptionId) {
+        return vm.resolveClass(TELEPHONY_MANAGER_CLASS).newObject(
+                new TelephonyManagerState(subscriptionId));
+    }
+
+    private DvmObject<?> createSubscriptionManager() {
+        return vm.resolveClass(SUBSCRIPTION_MANAGER_CLASS)
+                .newObject(telephonyProfile);
+    }
+
+    private List<DvmObject<?>> createSubscriptionInfoObjects() {
+        List<DvmObject<?>> subscriptions = new ArrayList<>();
+        for (int subscriptionId
+                : telephonyProfile.getActiveSubscriptionIds()) {
+            subscriptions.add(createSubscriptionInfo(subscriptionId));
+        }
+        return subscriptions;
+    }
+
+    private DvmObject<?> createSubscriptionInfo(int subscriptionId) {
+        int slotIndex = telephonyProfile.getSlotIndexForSubscription(
+                subscriptionId);
+        return vm.resolveClass(SUBSCRIPTION_INFO_CLASS).newObject(
+                new SubscriptionInfoState(subscriptionId, slotIndex));
+    }
+
+    private String resolveImei(
+            DvmObject<?> object,
+            String signature,
+            VarArg arguments) {
+        if (signature.contains("(I)")) {
+            return telephonyProfile.getImeiForSlot(arguments.getIntArg(0));
+        }
+        Object value = object == null ? null : object.getValue();
+        if (value instanceof TelephonyManagerState) {
+            return telephonyProfile.getImeiForSubscription(
+                    ((TelephonyManagerState) value).subscriptionId);
+        }
+        return telephonyProfile.getImeiForDefaultSubscription();
+    }
+
+    private void enforcePhoneStatePermission() {
+        if (!telephonyProfile.isPhoneStatePermissionGranted()) {
+            throw new SecurityException(
+                    "READ_PHONE_STATE is required to access IMEI");
+        }
+    }
+
+    private boolean isSystemServiceMethod(String signature) {
+        return signature.endsWith(
+                "->getSystemService(Ljava/lang/String;)Ljava/lang/Object;")
+                || signature.endsWith(
+                        "->getSystemService(Ljava/lang/Class;)Ljava/lang/Object;");
+    }
+
+    private boolean isPhoneStatePermission(String permission) {
+        return READ_PHONE_STATE.equals(permission)
+                || READ_PRIVILEGED_PHONE_STATE.equals(permission);
     }
 
     private boolean isImeiMethod(String signature) {
@@ -155,6 +549,40 @@ public final class AndroidSoRuntime extends AbstractJni
                 .equals(signature)
                 || "android/telephony/TelephonyManager->getImei(I)Ljava/lang/String;"
                 .equals(signature);
+    }
+
+    private static final class TelephonyManagerState {
+
+        private final int subscriptionId;
+
+        private TelephonyManagerState(int subscriptionId) {
+            this.subscriptionId = subscriptionId;
+        }
+    }
+
+    private static final class SubscriptionInfoState {
+
+        private final int subscriptionId;
+        private final int slotIndex;
+
+        private SubscriptionInfoState(int subscriptionId, int slotIndex) {
+            this.subscriptionId = subscriptionId;
+            this.slotIndex = slotIndex;
+        }
+    }
+
+    /**
+     * A non-null sentinel is needed because a handled Android getter may
+     * legitimately return null for an invalid or unavailable SIM slot.
+     */
+    private static final class TelephonyDispatch {
+
+        private static final DvmObject<?> NOT_HANDLED =
+                new DvmObject<Object>(null, null) {
+                };
+
+        private TelephonyDispatch() {
+        }
     }
 
     private void configureBackend(AndroidEmulatorBuilder builder) {
@@ -179,9 +607,9 @@ public final class AndroidSoRuntime extends AbstractJni
     }
 
     /**
-     * Calls the method associated with the emulated class by RegisterNatives.
+     * Calls the library version method through its exported JNI entry point.
      */
-    public synchronized String getDynamicJniVersion() {
+    public synchronized String getJniVersion() {
         StringObject result = (StringObject) nativeMediaProcessor
                 .callStaticJniMethodObject(
                         emulator,
@@ -189,6 +617,31 @@ public final class AndroidSoRuntime extends AbstractJni
         if (result == null) {
             throw new IllegalStateException(
                     "Custom native library returned no JNI version");
+        }
+        return result.getValue();
+    }
+
+    /**
+     * Runs an end-to-end native JNI probe through Context, TelephonyManager,
+     * permissions, SubscriptionManager, and SubscriptionInfo.
+     */
+    public synchronized String verifyTelephonyIntegration() {
+        String expectedImei =
+                telephonyProfile.getImeiForDefaultSubscription();
+        DvmObject<?> context = vm.resolveClass("android/content/Context")
+                .newObject(null);
+        StringObject result = (StringObject) nativeMediaProcessor
+                .callStaticJniMethodObject(
+                        emulator,
+                        "probeTelephony(Ljava/lang/Object;Ljava/lang/String;)"
+                                + "Ljava/lang/String;",
+                        context,
+                        new StringObject(vm, expectedImei));
+        String expectedResult = "OK:" + expectedImei;
+        if (result == null || !expectedResult.equals(result.getValue())) {
+            throw new IllegalStateException(
+                    "Android telephony integration probe failed: "
+                            + (result == null ? "no result" : result.getValue()));
         }
         return result.getValue();
     }
@@ -215,10 +668,9 @@ public final class AndroidSoRuntime extends AbstractJni
     }
 
     /**
-     * Calculates the file CRC and appends it through dynamically registered
-     * JNI.
+     * Calculates the file CRC and appends it through JNI.
      */
-    public synchronized int appendFileCrc32WithDynamicJni(
+    public synchronized int appendFileCrc32WithJni(
             Path output) throws IOException {
         mapOutput(output);
         try {

@@ -16,4 +16,7 @@ target_compile_options(
     -Wall
     -Wextra
     -Werror
+    # Required for unidbg ARM32: JNI callbacks do not preserve Android's
+    # process stack-canary state across the host/emulator boundary.
+    -fno-stack-protector
 )

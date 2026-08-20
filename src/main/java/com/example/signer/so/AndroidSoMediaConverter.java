@@ -22,11 +22,11 @@ import java.util.Objects;
 public final class AndroidSoMediaConverter implements MediaConverter {
 
     private AndroidSoRuntime runtime;
-    private String imei;
-    private String runtimeImei;
+    private TelephonyProfile telephonyProfile;
+    private TelephonyProfile runtimeTelephonyProfile;
 
     public synchronized void setImei(String imei) {
-        this.imei = Imei.complete(imei);
+        telephonyProfile = TelephonyProfile.singleSim(imei);
     }
 
     @Override
@@ -38,8 +38,8 @@ public final class AndroidSoMediaConverter implements MediaConverter {
         long copyNanos = System.nanoTime() - copyStarted;
 
         /*
-         * The application currently uses the dynamically registered JNI
-         * method. To call the exported C function directly through unidbg,
+         * The application currently uses the JNI method. To call the plain
+         * exported C function directly through unidbg,
          * replace the next line with:
          *
          * int status = android.appendFileCrc32WithSystemLibrary(output);
@@ -48,7 +48,7 @@ public final class AndroidSoMediaConverter implements MediaConverter {
          * appends its own "HASH" separator and CRC bytes.
          */
         long nativeStarted = System.nanoTime();
-        int status = android.appendFileCrc32WithDynamicJni(output);
+        int status = android.appendFileCrc32WithJni(output);
         long nativeNanos = System.nanoTime() - nativeStarted;
         System.out.println("[Performance] Host copy: "
                 + formatDuration(copyNanos));
@@ -70,20 +70,27 @@ public final class AndroidSoMediaConverter implements MediaConverter {
     }
 
     private AndroidSoRuntime runtime() throws IOException {
-        if (runtime == null || !Objects.equals(runtimeImei, imei)) {
+        if (runtime == null || !Objects.equals(
+                runtimeTelephonyProfile, telephonyProfile)) {
             if (runtime != null) {
                 runtime.close();
                 runtime = null;
-                runtimeImei = null;
+                runtimeTelephonyProfile = null;
             }
-            runtime = new AndroidSoRuntime(imei);
-            runtimeImei = imei;
+            if (telephonyProfile == null) {
+                throw new IllegalStateException(
+                        "IMEI must be configured before conversion");
+            }
+            runtime = new AndroidSoRuntime(telephonyProfile);
+            runtimeTelephonyProfile = telephonyProfile;
             System.out.println("[Custom SO] Emulator backend: "
                     + runtime.getBackendName());
             System.out.println("[Performance] Emulator initialization: "
                     + formatDuration(runtime.getInitializationNanos()));
-            System.out.println("[Custom SO] Dynamic JNI: "
-                    + runtime.getDynamicJniVersion());
+            System.out.println("[Custom SO] JNI: "
+                    + runtime.getJniVersion());
+            System.out.println("[Custom SO] Telephony probe: "
+                    + runtime.verifyTelephonyIntegration());
             System.out.println("[Custom SO] System library: "
                     + runtime.getSystemLibraryVersion());
         }
@@ -162,7 +169,7 @@ public final class AndroidSoMediaConverter implements MediaConverter {
         if (runtime != null) {
             runtime.close();
             runtime = null;
-            runtimeImei = null;
+            runtimeTelephonyProfile = null;
         }
     }
 }

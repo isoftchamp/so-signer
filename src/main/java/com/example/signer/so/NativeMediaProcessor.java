@@ -19,6 +19,16 @@ public final class NativeMediaProcessor {
     public static native String nativeVersion();
 
     /**
+     * Exercises Android's Java telephony APIs from native JNI and returns
+     * {@code OK:<imei>} only when every emulated acquisition route agrees.
+     *
+     * @param context synthetic Android application context supplied by unidbg
+     * @param expectedImei complete IMEI expected from every route
+     */
+    public static native String probeTelephony(
+            Object context, String expectedImei);
+
+    /**
      * Calculates CRC-32C for the complete file and appends {@code HASH}
      * followed by four raw little-endian checksum bytes.
      *
