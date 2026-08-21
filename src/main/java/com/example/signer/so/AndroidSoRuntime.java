@@ -55,6 +55,7 @@ public final class AndroidSoRuntime extends AbstractJni
             NativeMediaProcessor.class.getName().replace('.', '/');
     private static final String VIRTUAL_OUTPUT_PATH =
             "/sdcard/so-signer/output";
+    private static final int SYSTEM_LIBRARY_API_LEVEL = 23;
     private static final String TELEPHONY_SERVICE = "phone";
     private static final String TELEPHONY_MANAGER_CLASS =
             "android/telephony/TelephonyManager";
@@ -95,7 +96,7 @@ public final class AndroidSoRuntime extends AbstractJni
             configureBackend(builder);
             emulator = builder.build();
             emulator.getMemory().setLibraryResolver(
-                    new AndroidResolver(TelephonyProfile.ANDROID_API_LEVEL));
+                    new AndroidResolver(SYSTEM_LIBRARY_API_LEVEL));
             emulator.getSyscallHandler().addIOResolver(this);
 
             vm = emulator.createDalvikVM();

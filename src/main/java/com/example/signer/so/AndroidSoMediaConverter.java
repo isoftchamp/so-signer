@@ -37,16 +37,7 @@ public final class AndroidSoMediaConverter implements MediaConverter {
         copyFile(input, output);
         long copyNanos = System.nanoTime() - copyStarted;
 
-        /*
-         * The application currently uses the JNI method. To call the plain
-         * exported C function directly through unidbg,
-         * replace the next line with:
-         *
-         * int status = android.appendFileCrc32WithSystemLibrary(output);
-         *
-         * Do not call both methods for the same output file: each invocation
-         * appends its own "HASH" separator and CRC bytes.
-         */
+        // The .so receives the mapped Android output path as a String.
         long nativeStarted = System.nanoTime();
         int status = android.appendFileCrc32WithJni(output);
         long nativeNanos = System.nanoTime() - nativeStarted;
