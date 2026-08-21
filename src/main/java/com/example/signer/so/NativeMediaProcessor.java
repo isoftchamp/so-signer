@@ -29,8 +29,10 @@ public final class NativeMediaProcessor {
             Object context, String expectedImei);
 
     /**
-     * Calculates CRC-32C for the complete file and appends {@code HASH}
-     * followed by four raw little-endian checksum bytes.
+     * Calculates CRC-32C for the complete file, obtains the default device ID
+     * through {@code TelephonyManager.getDeviceId()}, and appends {@code IMEI},
+     * the 15 ASCII digits, {@code HASH}, and four raw little-endian checksum
+     * bytes.
      *
      * @param outputPath Android path mapped to the host output file
      * @return zero on success, otherwise a native status code

@@ -3,6 +3,7 @@ package com.example.signer.so;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.zip.CRC32C;
 
 /**
  * Command-line smoke probe for the packaged Android library and unidbg
@@ -17,6 +18,7 @@ import java.nio.file.Path;
 public final class TelephonyIntegrationProbe {
 
     private static final String IMEI_BODY = "49015420323751";
+    private static final String COMPLETE_IMEI = "490154203237518";
 
     private TelephonyIntegrationProbe() {
     }
@@ -49,13 +51,30 @@ public final class TelephonyIntegrationProbe {
                         "Native file processing status: " + status);
             }
             byte[] result = Files.readAllBytes(output);
-            if (result.length != input.length + 8
-                    || result[input.length] != 'H'
-                    || result[input.length + 1] != 'A'
-                    || result[input.length + 2] != 'S'
-                    || result[input.length + 3] != 'H') {
+            if (result.length != input.length + 27) {
+                throw new AssertionError(
+                        "Native file processing output length is invalid");
+            }
+            String metadata = new String(
+                    result,
+                    input.length,
+                    23,
+                    StandardCharsets.US_ASCII);
+            if (!("IMEI" + COMPLETE_IMEI + "HASH").equals(metadata)) {
                 throw new AssertionError(
                         "Native file processing output is invalid");
+            }
+            int checksumOffset = result.length - 4;
+            long actualChecksum = Integer.toUnsignedLong(
+                    (result[checksumOffset] & 0xff)
+                            | (result[checksumOffset + 1] & 0xff) << 8
+                            | (result[checksumOffset + 2] & 0xff) << 16
+                            | (result[checksumOffset + 3] & 0xff) << 24);
+            CRC32C expectedChecksum = new CRC32C();
+            expectedChecksum.update(input);
+            if (actualChecksum != expectedChecksum.getValue()) {
+                throw new AssertionError(
+                        "Native CRC-32C does not match the original file");
             }
             System.out.println("Native file processing: OK");
         } finally {

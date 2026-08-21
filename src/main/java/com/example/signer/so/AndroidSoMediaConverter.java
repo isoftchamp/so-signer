@@ -54,7 +54,8 @@ public final class AndroidSoMediaConverter implements MediaConverter {
         long checksum = readAppendedCrc32(output);
         System.out.println("[Custom SO] CRC-32C: "
                 + String.format("%08x", checksum));
-        System.out.println("[Custom SO] Appended: ASCII HASH + 4 raw bytes");
+        System.out.println("[Custom SO] Appended: ASCII IMEI + 15 digits"
+                + " + ASCII HASH + 4 raw bytes");
         System.out.println("[Custom SO] Output: " + output.toAbsolutePath());
         System.out.println("[Performance] Conversion total: "
                 + formatDuration(System.nanoTime() - conversionStarted));
@@ -150,6 +151,10 @@ public final class AndroidSoMediaConverter implements MediaConverter {
                 return "CRC bytes could not be written";
             case 9:
                 return "output file could not be closed";
+            case 10:
+                return "IMEI separator could not be written";
+            case 11:
+                return "IMEI digits could not be written";
             default:
                 return "unknown native error";
         }

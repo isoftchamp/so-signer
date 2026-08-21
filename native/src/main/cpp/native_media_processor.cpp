@@ -8,12 +8,19 @@
 
 extern "C" JNIEXPORT int so_signer_append_file_crc32(
         const char* output_path);
+extern "C" JNIEXPORT int so_signer_append_file_crc32_with_imei(
+        const char* output_path,
+        const char* imei);
 
 namespace {
 
 constexpr char kNativeVersion[] = "so-signer-native/4";
 constexpr std::size_t kReadBufferSize = 1024 * 1024;
 constexpr std::uint32_t kCrc32cPolynomial = 0x82f63b78U;
+constexpr std::size_t kImeiLength = 15;
+constexpr std::array<unsigned char, 4> kImeiSeparator = {
+    'I', 'M', 'E', 'I'
+};
 constexpr std::array<unsigned char, 4> kHashSeparator = {
     'H', 'A', 'S', 'H'
 };
@@ -28,7 +35,9 @@ enum AppendStatus {
     kOutputOpenFailed = 6,
     kSeparatorWriteFailed = 7,
     kChecksumWriteFailed = 8,
-    kOutputCloseFailed = 9
+    kOutputCloseFailed = 9,
+    kImeiSeparatorWriteFailed = 10,
+    kImeiWriteFailed = 11
 };
 
 using CrcTable = std::array<
@@ -349,6 +358,44 @@ jstring probeTelephony(
     return environment->NewStringUTF(result.data());
 }
 
+bool IsValidImei(const char* imei) {
+    if (imei == nullptr) {
+        return false;
+    }
+    for (std::size_t index = 0; index < kImeiLength; ++index) {
+        if (imei[index] < '0' || imei[index] > '9') {
+            return false;
+        }
+    }
+    return imei[kImeiLength] == '\0';
+}
+
+jstring getDefaultDeviceId(JNIEnv* environment) {
+    jclass telephony_class = environment->FindClass(
+            "android/telephony/TelephonyManager");
+    if (telephony_class == nullptr) {
+        return nullptr;
+    }
+    jmethodID get_default = environment->GetStaticMethodID(
+            telephony_class,
+            "getDefault",
+            "()Landroid/telephony/TelephonyManager;");
+    jmethodID get_device_id = environment->GetMethodID(
+            telephony_class,
+            "getDeviceId",
+            "()Ljava/lang/String;");
+    if (get_default == nullptr || get_device_id == nullptr) {
+        return nullptr;
+    }
+    jobject telephony_manager = environment->CallStaticObjectMethodA(
+            telephony_class, get_default, nullptr);
+    if (telephony_manager == nullptr) {
+        return nullptr;
+    }
+    return static_cast<jstring>(environment->CallObjectMethodA(
+            telephony_manager, get_device_id, nullptr));
+}
+
 jint appendFileCrc32(
         JNIEnv* environment,
         jclass /* type */,
@@ -363,7 +410,24 @@ jint appendFileCrc32(
         return kInvalidArgument;
     }
 
-    const int status = so_signer_append_file_crc32(output);
+    jstring imei_string = getDefaultDeviceId(environment);
+    if (imei_string == nullptr) {
+        environment->ReleaseStringUTFChars(output_path, output);
+        return kInvalidArgument;
+    }
+    const char* imei = environment->GetStringUTFChars(
+            imei_string, nullptr);
+    if (!IsValidImei(imei)) {
+        if (imei != nullptr) {
+            environment->ReleaseStringUTFChars(imei_string, imei);
+        }
+        environment->ReleaseStringUTFChars(output_path, output);
+        return kInvalidArgument;
+    }
+
+    const int status = so_signer_append_file_crc32_with_imei(
+            output, imei);
+    environment->ReleaseStringUTFChars(imei_string, imei);
     environment->ReleaseStringUTFChars(output_path, output);
     return status;
 }
@@ -405,7 +469,17 @@ Java_com_example_signer_so_NativeMediaProcessor_appendFileCrc32(
  */
 extern "C" JNIEXPORT int so_signer_append_file_crc32(
         const char* output_path) {
+    return so_signer_append_file_crc32_with_imei(
+            output_path, nullptr);
+}
+
+extern "C" JNIEXPORT int so_signer_append_file_crc32_with_imei(
+        const char* output_path,
+        const char* imei) {
     if (output_path == nullptr) {
+        return kInvalidArgument;
+    }
+    if (imei != nullptr && !IsValidImei(imei)) {
         return kInvalidArgument;
     }
 
@@ -450,7 +524,26 @@ extern "C" JNIEXPORT int so_signer_append_file_crc32(
         return kOutputOpenFailed;
     }
 
-    if (std::fwrite(
+    if (imei != nullptr
+            && std::fwrite(
+                    kImeiSeparator.data(),
+                    1,
+                    kImeiSeparator.size(),
+                    output) != kImeiSeparator.size()) {
+        status = kImeiSeparatorWriteFailed;
+    }
+    if (status == kSuccess
+            && imei != nullptr
+            && std::fwrite(
+                    imei,
+                    1,
+                    kImeiLength,
+                    output) != kImeiLength) {
+        status = kImeiWriteFailed;
+    }
+
+    if (status == kSuccess
+            && std::fwrite(
             kHashSeparator.data(),
             1,
             kHashSeparator.size(),
